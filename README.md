@@ -5,7 +5,6 @@ This repository contains an implementation and evaluation of a short-term load f
 The Decomposition Penalty: Quantifying the Impact of Classical Pre-processing on Time-Series Foundation Models in Load Forecasting
 
 DOI: https://doi.org/10.5281/zenodo.18828154
-Zenodo: https://zenodo.org/doi/10.5281/zenodo.18828154
 
 Authors: Nikhil Vinod
 License: CC BY 4.0 (per Zenodo)
@@ -77,4 +76,3 @@ Vinod, N. (2026). The Decomposition Penalty: Quantifying the Impact of Classical
 Author: Nikhil Vinod — nikhilvinod321@gmail.com
 
 ---
-Generated from the Zenodo preprint (DOI above) and the repository implementation.
