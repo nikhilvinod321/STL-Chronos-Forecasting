@@ -1,0 +1,34 @@
+data:
+  path: data/PJM_Load_hourly.csv
+  train_years: [2015, 2016, 2017]
+  test_year: 2018
+
+model:
+  chronos_id: "amazon/chronos-t5-small"
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q", "k", "v", "o"]
+
+training:
+  epochs: 10
+  per_device_batch_size: 4
+  gradient_accumulation_steps: 4
+  effective_batch_size: 16  # calculated: 4 * 4
+
+evaluation:
+  horizon: 48
+  context_length: 336
+  stride: 48
+
+execution:
+  random_seed: 42
+
+dry_run:
+  enabled: false
+  max_windows: 2
+  max_epochs: 1
+  max_steps: 5
+  limit_ets_search: true
+  ets_seasonal_periods: [168]
+  ets_models: ["ZZZ"]
