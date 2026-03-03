@@ -16,19 +16,15 @@ class ChronosLoRAModel:
     def __init__(self, config: dict):
         self.config = config
         self.model_id = config["model"]["chronos_id"]
-        self.device = get_device(config)
+        self.device = get_device()
         self.pipeline = None
         self.peft_model = None
         self.lora_applied = False
 
     def load_pipeline(self):
-        """Load the Chronos pipeline with GPU if available."""
-        from utils import print_device_info
-        print_device_info(self.config)
-
+        """Load the Chronos pipeline."""
         device_map = "cuda" if self.device.type == "cuda" else "cpu"
-        # Use bfloat16 on GPU for memory efficiency, float32 on CPU
-        dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
+        dtype = torch.float32  # Safe for 6GB VRAM with small model
 
         self.pipeline = ChronosPipeline.from_pretrained(
             self.model_id,
@@ -90,10 +86,7 @@ class ChronosLoRAModel:
                    epochs: int = 10, dry_run: bool = False, config: dict = None):
         """
         Fine-tune the LoRA-adapted model on training data.
-        Implements mixed precision, gradient accumulation, memory management, and validation loss tracking.
-        
-        Returns:
-            dict: {'train_loss': list, 'val_loss': list} - loss history for each epoch
+        Implements mixed precision, gradient accumulation, and memory management.
         """
         if not self.lora_applied:
             raise ValueError("LoRA not applied. Call apply_lora() first.")
@@ -105,14 +98,9 @@ class ChronosLoRAModel:
         max_steps = dry_run_cfg.get("max_steps", 5) if dry_run else None
         max_epochs = dry_run_cfg.get("max_epochs", 1) if dry_run else epochs
 
-        # Split into train/val (80/20)
-        split_idx = int(len(train_contexts) * 0.8)
-        val_contexts = train_contexts[split_idx:]
-        val_targets = train_targets[split_idx:]
-        train_contexts = train_contexts[:split_idx]
-        train_targets = train_targets[:split_idx]
-
         model = self.peft_model
+        model.train()
+
         optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, model.parameters()),
             lr=1e-4,
@@ -124,14 +112,9 @@ class ChronosLoRAModel:
 
         tokenizer = self.pipeline.tokenizer
         native_pred_len = tokenizer.config.prediction_length  # 64 for chronos-t5-small
-        
-        # Track loss history
-        history = {'train_loss': [], 'val_loss': []}
         total_steps = 0
 
         for epoch in range(max_epochs):
-            # ============ TRAINING ============
-            model.train()
             epoch_loss = 0.0
             optimizer.zero_grad()
             step_in_epoch = 0
@@ -139,7 +122,7 @@ class ChronosLoRAModel:
 
             pbar = tqdm(
                 range(0, len(train_contexts), per_device_batch_size),
-                desc=f"  Epoch {epoch+1}/{max_epochs} [Train]",
+                desc=f"  Epoch {epoch+1}/{max_epochs}",
                 unit="batch",
                 total=n_batches,
                 leave=True,
@@ -214,62 +197,8 @@ class ChronosLoRAModel:
                     optimizer.step()
                 optimizer.zero_grad()
 
-            avg_train_loss = epoch_loss / max(step_in_epoch, 1)
-            history['train_loss'].append(avg_train_loss)
-
-            # ============ VALIDATION ============
-            model.eval()
-            val_epoch_loss = 0.0
-            val_step = 0
-
-            val_pbar = tqdm(
-                range(0, len(val_contexts), per_device_batch_size),
-                desc=f"  Epoch {epoch+1}/{max_epochs} [Val]",
-                unit="batch",
-                total=(len(val_contexts) + per_device_batch_size - 1) // per_device_batch_size,
-                leave=False,
-            )
-            
-            with torch.no_grad():
-                for i in val_pbar:
-                    batch_contexts = val_contexts[i:i + per_device_batch_size]
-                    batch_targets = val_targets[i:i + per_device_batch_size]
-
-                    for ctx, tgt in zip(batch_contexts, batch_targets):
-                        ctx_tensor = torch.tensor(ctx, dtype=torch.float32).unsqueeze(0)
-                        tgt_tensor = torch.tensor(tgt, dtype=torch.float32).unsqueeze(0)
-
-                        # Pad target to native prediction_length if shorter
-                        if tgt_tensor.shape[1] < native_pred_len:
-                            pad_len = native_pred_len - tgt_tensor.shape[1]
-                            tgt_tensor = torch.nn.functional.pad(tgt_tensor, (0, pad_len), value=0.0)
-
-                        # Tokenize
-                        input_ids, attention_mask, scale = tokenizer.context_input_transform(
-                            ctx_tensor
-                        )
-                        labels, labels_mask = tokenizer.label_input_transform(
-                            tgt_tensor, scale
-                        )
-                        input_ids = input_ids.to(self.device)
-                        attention_mask = attention_mask.to(self.device)
-                        labels = labels.to(self.device)
-
-                        output = model(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            labels=labels,
-                        )
-                        val_epoch_loss += output.loss.item()
-
-                    val_step += 1
-                    val_pbar.update(1)
-
-            val_pbar.close()
-            avg_val_loss = val_epoch_loss / max(val_step, 1)
-            history['val_loss'].append(avg_val_loss)
-
-            print(f"  Epoch {epoch+1}/{max_epochs}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
+            avg_loss = epoch_loss / max(step_in_epoch, 1)
+            print(f"  Epoch {epoch+1}/{max_epochs}, Loss: {avg_loss:.6f}")
 
             # Memory management
             clear_gpu_memory()
@@ -279,7 +208,7 @@ class ChronosLoRAModel:
                 break
 
         model.eval()
-        return history
+        return self
 
     def predict_lora(self, context: np.ndarray, horizon: int = 48) -> np.ndarray:
         """
