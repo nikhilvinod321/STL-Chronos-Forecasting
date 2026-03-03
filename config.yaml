@@ -2,6 +2,8 @@ data:
   path: data/PJM_Load_hourly.csv
   train_years: [2015, 2016, 2017]
   test_year: 2018
+  # Generalizability upgrade: run on multiple datasets simultaneously
+  datasets: ["PJM", "ETTm1", "UCI_Electricity"]  # PJM | ETTm1 | UCI_Electricity
 
 model:
   chronos_id: "amazon/chronos-t5-small"
@@ -9,6 +11,12 @@ model:
   lora_alpha: 32
   lora_dropout: 0.05
   lora_target_modules: ["q", "k", "v", "o"]
+  # Second foundation model for generalizability (set to null to skip)
+  # Choices: "chronos-bolt-small", "chronos-bolt-base", "lag-llama", "timesfm", null
+  # lag-llama: decoder-only Meta-style model; install with: pip install lag-llama
+  # Chronos-Bolt uses encoder-only PatchTST architecture (distinct from T5 seq2seq)
+  # and requires no extra install — already covered by chronos-forecasting package.
+  second_foundation_model: "lag-llama"
 
 training:
   epochs: 10
@@ -23,6 +31,9 @@ evaluation:
 
 execution:
   random_seed: 42
+  # Force GPU usage; will raise error if CUDA is not available when true
+  require_gpu: false
+  device: "auto"  # "auto" = use GPU if available, "cpu" = force CPU, "cuda" = force GPU
 
 dry_run:
   enabled: false
@@ -32,3 +43,9 @@ dry_run:
   limit_ets_search: true
   ets_seasonal_periods: [168]
   ets_models: ["ZZZ"]
+
+# LoRA hyperparameter sweep settings
+lora_sweep:
+  ranks: [8, 16, 32]
+  # Alpha is automatically set to 2x rank per canonical convention
+  eval_windows: 10  # Quick evaluation windows per rank
